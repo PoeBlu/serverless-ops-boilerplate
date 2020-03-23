@@ -1,0 +1,20 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+        nodejs: 10
+        
+  build:
+    commands:
+      - cd app
+      - node installer.js
+      # Env variable BucketName is defined in pipeline's template: Pipeline/backend-pipeline.yaml
+      - aws cloudformation package --s3-bucket $BucketName --template-file template.yaml --output-template-file packaged.yaml
+
+artifacts:
+  discard-paths: yes
+  base-directory: app
+  name: $PipelineName-BuildPackage-$(date +%Y-%m-%d)  
+  files:
+    - packaged.yaml
+    - template.yaml

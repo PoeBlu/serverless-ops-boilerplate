@@ -1,0 +1,360 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Boilerplate for SAM app the DevOps way
+
+Parameters: 
+  AppName: 
+    Default: boilerplate-sam
+    Type: String
+  DevOpsAccountId: 
+    Type: String
+  Env: 
+    AllowedValues: 
+      - dev
+      - test
+      - prod
+    Default: dev
+    Type: String
+  HeaderValue: 
+    Default: SampleHeader
+    Description: "This header restricts access to frontend only through Cloudfront distribution"
+    Type: String
+  WeatherApiKey:
+    Type: String
+
+
+Globals: 
+  Function: 
+    Environment: 
+      Variables: 
+        Env: !Ref Env
+        AppName: !Ref AppName
+    Handler: app.handler
+    Layers: 
+      - !Ref Layer
+    MemorySize: 1024
+    Runtime: nodejs10.x
+    Tags: 
+      AppName: AppName
+      Env: Env
+    Timeout: 600
+    Tracing: Active
+    
+
+
+Resources: 
+  ApiGW: 
+    Properties: 
+      Auth: 
+        Authorizers: 
+          MyCognitoAuthorizer: 
+            UserPoolArn: !GetAtt MyCognitoUserPool.Arn
+      Cors: 
+        AllowHeaders: "'authorization, content-type'"
+        AllowMethods: "'GET,POST,DELETE,OPTIONS'"
+        AllowOrigin: "'*'"
+      OpenApiVersion: "2.0"
+      StageName: api
+      TracingEnabled: true
+    Type: "AWS::Serverless::Api"
+
+
+  CognitoAuthenticationMonitor: 
+    Properties: 
+      Events: 
+        CognitoUserPoolPostAuthentication: 
+          Properties: 
+            Trigger: PostAuthentication
+            UserPool: !Ref MyCognitoUserPool
+          Type: Cognito
+      Handler: index.handler
+      InlineCode: |
+          exports.handler = async (event, context, callback) => {
+            console.log("event obj is " + JSON.stringify(event))  
+            callback(null, event);
+          }
+      MemorySize: 128
+      Runtime: nodejs10.x
+      Timeout: 3
+    Type: "AWS::Serverless::Function"
+
+
+  CognitoDomain:
+    Properties: 
+      Domain: !Sub ${AppName}-${Env}
+      UserPoolId: !Ref MyCognitoUserPool   
+    Type: AWS::Cognito::UserPoolDomain          
+        
+  MyCognitoUserPool: 
+    Properties: 
+      Policies: 
+        PasswordPolicy: 
+          MinimumLength: 8
+      UserPoolName: !Sub "${AppName}-${Env}"
+    Type: "AWS::Cognito::UserPool"
+
+
+  FrontendBucket:
+    Description: 'Hosts frontend'
+    Properties:
+      AccessControl: 'Private'
+      BucketName: !Sub ${AppName}-${Env}-public
+      VersioningConfiguration:
+        Status: Enabled              
+      PublicAccessBlockConfiguration:
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+        BlockPublicAcls: false
+        BlockPublicPolicy: false        
+      WebsiteConfiguration:
+        IndexDocument: index.html    
+    Type: 'AWS::S3::Bucket'
+
+  FrontendBucketPolicy: 
+    Properties: 
+      Bucket: !Ref FrontendBucket
+      PolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "s3:*"
+            Effect: Allow
+            Principal: 
+              AWS: !Join [ "", ["arn:aws:iam::", !Ref DevOpsAccountId, !Sub ":role/${AppName}-${Env}-codepipeline"] ]
+            Resource: 
+              - !Sub "arn:aws:s3:::${AppName}-${Env}-public/*"
+              - !Sub "arn:aws:s3:::${AppName}-${Env}-public"
+          - 
+            Action: 
+              - "s3:GetObject"
+            Condition: 
+              StringLike:
+                aws:Referer: !Ref HeaderValue 
+            Effect: Allow
+            Principal: "*"
+            Resource: 
+              - !Sub "arn:aws:s3:::${AppName}-${Env}-public/*"
+    Type: "AWS::S3::BucketPolicy"
+
+
+  FunctionsRole: 
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal: 
+              Service: 
+                - lambda.amazonaws.com
+            Sid: AllowLambdaServiceToAssumeRole
+        Version: "2012-10-17"
+      Path: /
+      Policies: 
+        - 
+          PolicyDocument: 
+            Statement: 
+              - 
+                Action: 
+                  - "tag:GetResources"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "xray:GetSamplingRules"
+                  - "xray:GetSamplingStatisticSummaries"
+                  - "xray:GetSamplingTargets"
+                  - "xray:PutTraceSegments"
+                  - "xray:PutTelemetryRecords"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "lambda:GetLayerVersion"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "ec2:CreateNetworkInterface"
+                  - "ec2:DeleteNetworkInterface"
+                  - "ec2:DescribeNetworkInterfaces"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "secretsmanager:DescribeSecret"
+                  - "secretsmanager:GetRandomPassword"
+                  - "secretsmanager:GetResourcePolicy"
+                  - "secretsmanager:GetSecretValue"
+                  - "secretsmanager:ListSecretVersionIds"
+                Effect: Allow
+                Resource: !Ref SecretsManager
+              - 
+                Action: 
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Effect: Allow
+                Resource: "*"
+            Version: "2012-10-17"
+          PolicyName: root
+    Type: "AWS::IAM::Role"
+
+
+  Layer: 
+    Properties: 
+      CompatibleRuntimes: 
+        - nodejs10.x
+      ContentUri: ./layer
+      Description: "Add your commonly used libraries to the layer."
+      LayerName: Layer
+      RetentionPolicy: Retain
+    Type: "AWS::Serverless::LayerVersion"
+
+
+
+  MyCloudFront: 
+    DependsOn: FrontendBucket
+    Properties: 
+      DistributionConfig: 
+        Comment: !Sub "${AppName}-${Env}"
+        CustomErrorResponses: 
+          - 
+            ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        DefaultCacheBehavior: 
+          AllowedMethods: 
+            - GET
+            - HEAD
+            - OPTIONS
+          DefaultTTL: 0
+          ForwardedValues: 
+            Cookies: 
+              Forward: none
+            QueryString: "false"
+          MaxTTL: 0
+          MinTTL: 0
+          TargetOriginId: !Sub "S3-Website-${AppName}-${Env}-public.s3-website.${AWS::Region}.amazonaws.com"
+          ViewerProtocolPolicy: redirect-to-https
+        Enabled: "true"
+        Origins:
+          - DomainName: !Sub ${AppName}-${Env}-public.s3-website.${AWS::Region}.amazonaws.com
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only 
+              OriginReadTimeout: 30              
+            Id: !Sub S3-Website-${AppName}-${Env}-public.s3-website.${AWS::Region}.amazonaws.com                         
+            OriginCustomHeaders:
+              - HeaderName: Referer
+                HeaderValue: !Ref HeaderValue
+    Type: "AWS::CloudFront::Distribution"
+
+
+  MyUserPoolClient: 
+    Properties: 
+      AllowedOAuthFlows: 
+      # "code" stands for "Authorization code grant" which is recommended by AWS        
+        - code
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes: 
+        - openid
+        - email
+        - profile
+      CallbackURLs:
+        # URLs must be https
+
+        - !Join [ "", ["https://", !GetAtt MyCloudFront.DomainName] ]
+        # You can whitelist localhost only for debugging purpose. Remove it in your production environment
+        # - http://localhost:8000     
+      ClientName: !Sub "${AppName}-${Env}"
+      GenerateSecret: false
+      LogoutURLs:
+        # URLs must be https 
+        - !Join [ "", ["https://", !GetAtt MyCloudFront.DomainName] ]
+        # You can whitelist localhost only for debugging purpose. Remove it in your production environment
+        # - http://localhost:8000
+      ReadAttributes: 
+        - email
+        - name
+      SupportedIdentityProviders: 
+        - COGNITO
+      UserPoolId: !Ref MyCognitoUserPool
+      WriteAttributes: 
+        - email
+        - name
+    Type: "AWS::Cognito::UserPoolClient"
+
+
+  SecretsManager: 
+    Properties: 
+      GenerateSecretString: 
+        ExcludeCharacters: "\"@/\\"
+        GenerateStringKey: password
+        PasswordLength: 15
+        SecretStringTemplate: !Join [ '', ['{"ApiKey": "', !Ref WeatherApiKey, '"}'] ]  
+      Name: !Sub "${AppName}-${Env}"
+      Tags: 
+        - 
+          Key: AppName
+          Value: !Ref AppName
+        - 
+          Key: Env
+          Value: !Ref Env
+    Type: "AWS::SecretsManager::Secret"
+
+
+  Weather: 
+    Properties: 
+      CodeUri: weather/
+      Events: 
+        Root: 
+          Properties: 
+            Auth: 
+              Authorizer: MyCognitoAuthorizer
+            Method: GET
+            Path: /weather
+            RestApiId: !Ref ApiGW
+          Type: Api
+      Role: !GetAtt FunctionsRole.Arn
+    Type: "AWS::Serverless::Function"
+
+
+Outputs: 
+  ApiRoot: 
+    Description: "API endpoint"
+    Export: 
+      Name: !Sub "${AppName}-${Env}-api"
+    Value: !Sub "https://${ApiGW}.execute-api.${AWS::Region}.amazonaws.com/api"
+  RedirectUri: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-cloudfront-domain"
+    Value: !Join [ "", ["https://", !GetAtt MyCloudFront.DomainName] ]   
+  CloudFrontId: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-cloudfront-id"
+    Value: !Ref MyCloudFront
+  FrontendBucket: 
+    Description: "Hosts frontend part"
+    Export: 
+      Name: !Sub "${AppName}-${Env}-frontend-bucket"
+    Value: !Ref FrontendBucket
+  UserPoolAppClientId: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-userpool-client-id"
+    Value: !Ref MyUserPoolClient
+  UserPoolId: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-userpool-id"
+    Value: !Ref MyCognitoUserPool
+  UserPoolDomain: 
+    Description: "Cognito User Pool Domain"
+    Export: 
+      Name: !Sub "${AppName}-${Env}-userpool-domain"
+    Value: !Sub "${CognitoDomain}.auth.${AWS::Region}.amazoncognito.com"
+
+
+
+      

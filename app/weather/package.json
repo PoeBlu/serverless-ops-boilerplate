@@ -1,0 +1,14 @@
+{
+  "name": "worklist",
+  "version": "1.0.0",
+  "description": "",
+  "main": "app.js",
+  "repository": "",
+  "author": "Mahdi Azarboon",
+  "scripts": {
+    "test": "mocha tests/unit/"
+  },
+  "dependencies": {
+    "node-fetch": "^2.6.0"
+  }
+}

@@ -1,0 +1,129 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+
+Parameters:
+  WeatherApiKey:
+    Description: Get API KEY from openweathermap.org/
+    Type: String
+  DevOpsAccountId:
+    Type: Number
+  BackendRepository:
+    Type: String
+    Description: Codecommit repository that contains backend part of application
+  FrontendRepository:
+    Type: String
+    Description: Codecommit repository name that contains frontend part of application          
+  AppName:
+    Type: String
+    Default: serverless-ops    
+  Env:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - test
+      - prod         
+  DockerImage:
+    Type: String
+    Description: ECR image that contains dependency for test suit (i.e. Robot Framework)
+    Default: azarboon/serverless-ops-codebuild      
+  BackendAppDeployed:
+    Type: String
+    Default: false
+    Description: Set to true, when backend app is deployed and Cognito details are available
+
+# Retrieve following values from output of the deployed app (app/template.yaml) 
+  ApiRoot:
+    Type: String
+    Description: Base url of the API Gateway. Get Cloudformation's output value of ApiRoot
+    Default: ""      
+  UserPoolAppClientId:
+    Type: String
+    Description: Cognito User Pool client id. Get Cloudformation's output value of UserPoolAppClientId
+    Default: ""      
+  UserPoolDomain:
+    Type: String
+    Description: Cognito User Pool web domain. Get Cloudformation's output value of UserPoolDomain
+    Default: "" 
+  RedirectUri: 
+    Type: String
+    Description: Cognito User Pool App Client's Callback and signout url. Get Cloudformation's output value of RedirectUri
+    Default: ""      
+  UserPoolId: 
+    Type: String   
+    Description: Cognito User Pool id. Get Cloudformation's output value of UserPoolId
+    Default: ""  
+
+ 
+# Enforces manual approval for deployment to production environment
+Conditions: 
+  BackendAppDeployed: !Equals [ !Ref BackendAppDeployed, true ]
+
+Mappings: 
+  PipelineParams: 
+    dev:
+      # The header value restrict access to S3 frontend only through Cloudfront. Choose different headervalue for your different environments.
+      HeaderValue: SampleHeader
+      # Your environment account id (dev/test/prod)
+      AccountId: 
+      # upon a new commit to this branch, pipeline gets triggered
+      Branch: master
+
+
+
+Resources:
+  CommonResources:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: nested-resources.yaml
+      TimeoutInMinutes: '120'
+      Parameters:
+        AppName: !Ref AppName
+        Env: !Ref Env
+        AccountId: !FindInMap [ PipelineParams, !Ref Env, AccountId]
+
+
+  BackendPipeline:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CommonResources
+    Properties:
+      TemplateURL: backend.yaml
+      TimeoutInMinutes: '30'      
+      Parameters:
+        AppName: !Ref AppName
+        Env: !Ref Env
+        CodebuildRole: !GetAtt CommonResources.Outputs.CodebuildRole
+        PipeLineRole: !GetAtt CommonResources.Outputs.PipeLineRole
+        ParameterOverrides: !Join [ '', ['{"Env":"', !Ref Env, '"," WeatherApiKey": "', !Ref WeatherApiKey, '"," DevOpsAccountId ": "' , !Ref DevOpsAccountId , '", "AppName": "', !Ref AppName, '", "DevOpsAccountId": "', !Ref DevOpsAccountId, '", "HeaderValue": "', !FindInMap [ PipelineParams, !Ref Env, HeaderValue], '"}'] ]
+        Branch: !FindInMap [ PipelineParams, !Ref Env, Branch]
+        Repository: !Ref BackendRepository
+        AccountId: !FindInMap [ PipelineParams, !Ref Env, AccountId]
+        ArtifactsBucket: !GetAtt CommonResources.Outputs.ArtifactsBucket 
+        Cmk: !GetAtt CommonResources.Outputs.Cmk
+        DockerImage: !Ref DockerImage
+        NotificationTopic: !GetAtt CommonResources.Outputs.NotificationTopic
+
+
+  FrontendPipeline:
+    Condition: BackendAppDeployed
+    DependsOn: BackendPipeline
+    Properties:   
+      Parameters:
+        AppName: !Ref AppName
+        CodebuildRole: !GetAtt CommonResources.Outputs.CodebuildRole
+        Env: !Ref Env
+        PipeLineRole: !GetAtt CommonResources.Outputs.PipeLineRole      
+        Branch: !FindInMap [ PipelineParams, !Ref Env, Branch]
+        Repository: !Ref FrontendRepository
+        AccountId: !FindInMap [ PipelineParams, !Ref Env, AccountId]
+        ArtifactsBucket: !GetAtt CommonResources.Outputs.ArtifactsBucket 
+        Cmk: !GetAtt CommonResources.Outputs.Cmk
+        NotificationTopic: !GetAtt CommonResources.Outputs.NotificationTopic        
+        ApiRoot: !Ref ApiRoot
+        UserPoolAppClientId: !Ref UserPoolAppClientId 
+        UserPoolDomain: !Ref UserPoolDomain 
+        RedirectUri: !Ref RedirectUri
+        UserPoolId: !Ref UserPoolId 
+      TemplateURL: frontend.yaml
+      TimeoutInMinutes: '60'     
+    Type: AWS::CloudFormation::Stack

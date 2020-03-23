@@ -1,0 +1,254 @@
+Outputs: 
+  ArtifactsBucket: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-artifact-bucket"
+    Value: !Ref ArtifactsBucket
+  Cmk: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-cmk"
+    Value: !GetAtt Cmk.Arn
+  CodebuildRole: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-codebuild-role"
+    Value: !GetAtt CodeBuildRole.Arn
+  NotificationTopic: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-topic"
+    Value: !Ref PipelineNotification
+  PipeLineRole: 
+    Export: 
+      Name: !Sub "${AppName}-${Env}-pipeline-role"
+    Value: !GetAtt PipeLineRole.Arn
+
+Parameters: 
+  AccountId: 
+    Type: String
+  AppName: 
+    Type: String
+  Env: 
+    Type: String
+
+Resources: 
+  ArtifactsBucket: 
+    Description: "Stores deployment artifacts"
+    Properties: 
+      AccessControl: Private
+      BucketName: !Sub "${AppName}-${Env}-artifacts"
+      PublicAccessBlockConfiguration: 
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+    Type: "AWS::S3::Bucket"
+  BucketPolicy: 
+    Properties: 
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "s3:*"
+            Effect: Allow
+            Principal: 
+              AWS: 
+                - !Join [ "", ["arn:aws:iam::", !Ref AccountId, ":role/PipelineSupportRole"] ]                       
+                - !GetAtt CodeBuildRole.Arn
+                - !GetAtt PipeLineRole.Arn
+            Resource: 
+              - !Sub "arn:aws:s3:::${AppName}-${Env}-artifacts"
+              - !Sub "arn:aws:s3:::${AppName}-${Env}-artifacts/*"
+    Type: "AWS::S3::BucketPolicy"
+  Cmk: 
+    Properties: 
+      Description: !Sub "This key encrypts pipeline ${AppName}-${Env} artifacts"
+      KeyPolicy: 
+        Id: !Sub "${AppName}-${Env}-backend"
+        Statement: 
+          - 
+            Action: 
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:GenerateDataKey*"
+              - "kms:Update*"
+              - "kms:Revoke*"
+              - "kms:Disable*"
+              - "kms:Get*"
+              - "kms:Delete*"
+              - "kms:ScheduleKeyDeletion"
+              - "kms:CancelKeyDeletion"
+              - "kms:Create*"
+              - "kms:Describe*"
+              - "kms:Enable*"
+              - "kms:List*"
+              - "kms:Put*"
+            Effect: Allow
+            Principal: 
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Resource: "*"
+            Sid: "Allows administration of key"
+          - 
+            Action: 
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+            Effect: Allow
+            Principal: 
+              AWS: 
+                - !Join [ "", ["arn:aws:iam::", !Ref AccountId, ":root"] ]
+            Resource: "*"
+            Sid: "Enable environmental accounts to get artifacts from ArtifactsBucket"
+        Version: "2012-10-17"
+    Type: "AWS::KMS::Key"
+
+  CmkAlias: 
+    Properties: 
+      AliasName: !Sub "alias/${AppName}-${Env}-backend"
+      TargetKeyId: !Ref Cmk
+    Type: "AWS::KMS::Alias"
+
+  CodeBuildRole: 
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal: 
+              Service: 
+                - codebuild.amazonaws.com
+        Version: "2012-10-17"
+      ManagedPolicyArns: 
+        - "arn:aws:iam::aws:policy/AWSCodeBuildAdminAccess"
+      Path: /
+      Policies: 
+        - 
+          PolicyDocument: 
+            Statement: 
+              - 
+                Action: 
+                  - "logs:*"
+                  - "s3:*"
+                  - "ec2:*"
+                  - "ecr:*"
+                  - "ssm:GetParameters"
+                Effect: Allow
+                Resource: "*"
+              - 
+                Action: 
+                  - "kms:*"
+                Effect: Allow
+                Resource: !GetAtt Cmk.Arn
+            Version: "2012-10-17"
+          PolicyName: CodeBuildAccessPolicy
+      RoleName: !Sub "${AppName}-${Env}-codebuild"
+    Type: "AWS::IAM::Role"
+    
+  NotificationRule: 
+    Properties: 
+      Description: "Triggers if pipeline fails"
+      EventPattern: 
+        detail: 
+          pipeline: 
+            - !Sub "${AppName}-${Env}-backend"
+            - !Sub "${AppName}-${Env}-frontend"
+          state: 
+            - FAILED
+        detail-type: 
+          - "CodePipeline Pipeline Execution State Change"
+        source: 
+          - aws.codepipeline
+      Name: !Sub "${AppName}-${Env}-backend"
+      State: ENABLED
+      Targets: 
+        - 
+          Arn: !Ref PipelineNotification
+          Id: !Sub "${AppName}-${Env}"
+          InputTransformer: 
+            InputPathsMap: 
+              pipeline: $.detail.pipeline
+            InputTemplate: "\"The pipeline <pipeline> has failed\"         \n"
+    Type: "AWS::Events::Rule"
+    
+  PipeLineRole: 
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Statement: 
+          - 
+            Action: 
+              - "sts:AssumeRole"
+            Effect: Allow
+            Principal: 
+              Service: 
+                - codepipeline.amazonaws.com
+        Version: 2012-10-17
+      Path: /
+      Policies: 
+        - 
+          PolicyDocument: 
+            Statement: 
+              - 
+                Action: 
+                  - "kms:*"
+                Effect: Allow
+                Resource: !GetAtt Cmk.Arn
+              - 
+                Action: 
+                  - "s3:*"
+                Effect: Allow
+                Resource: 
+                  - !Join ['',['arn:aws:s3:::',!Ref ArtifactsBucket, '/*']]
+                  - !Join ['',['arn:aws:s3:::',!Ref ArtifactsBucket]]
+              - 
+                Action: 
+                  - "sts:AssumeRole"
+                Effect: Allow
+                Resource: 
+                  - !Join [ "", ["arn:aws:iam::", !Ref AccountId, ":role/PipelineSupportRole"] ]
+
+              - 
+                Action: 
+                  - "codepipeline:*"
+                  - "iam:ListRoles"
+                  - "cloudformation:Describe*"
+                  - "cloudFormation:List*"
+                  - "codecommit:BatchGetRepositories"
+                  - "codecommit:Get*"
+                  - "codecommit:GitPull"
+                  - "codecommit:List*"
+                  - "codecommit:CancelUploadArchive"
+                  - "codecommit:UploadArchive"
+                  - "codecommit:CancelUploadArchive"
+                  - "codebuild:BatchGetBuilds"
+                  - "codebuild:StartBuild"
+                  - "iam:PassRole"
+                  - "sns:Publish"
+                  - "cloudformation:CreateStack"
+                  - "cloudformation:DeleteStack"
+                  - "cloudformation:DescribeStacks"
+                  - "cloudformation:UpdateStack"
+                  - "cloudformation:CreateChangeSet"
+                  - "cloudformation:DeleteChangeSet"
+                  - "cloudformation:DescribeChangeSet"
+                  - "cloudformation:ExecuteChangeSet"
+                  - "cloudformation:SetStackPolicy"
+                  - "cloudformation:ValidateTemplate"
+                Effect: Allow
+                Resource: 
+                  - "*"
+            Version: "2012-10-17"
+          PolicyName: !Sub "${AppName}-${Env}-codepipeline"
+      RoleName: !Sub "${AppName}-${Env}-codepipeline"
+    Type: "AWS::IAM::Role"
+
+  PipelineNotification: 
+    Properties: 
+      DisplayName: !Sub "${AppName}-${Env}"
+      Subscription: 
+        - 
+          Endpoint: sample@email.com
+          Protocol: email
+      TopicName: !Sub "${AppName}-${Env}"
+    Type: "AWS::SNS::Topic"

@@ -1,0 +1,169 @@
+# Enforces manual approval for deployment to production environment
+Conditions: 
+  IsProd: !Equals [ !Ref Env, prod ]
+
+
+Parameters: 
+  AccountId: 
+    Type: String
+  AppName: 
+    Type: String
+  ArtifactsBucket: 
+    Type: String
+  Branch: 
+    Type: String
+  Cmk: 
+    Type: String
+  CodebuildRole: 
+    Type: String
+  Env: 
+    Type: String
+  NotificationTopic: 
+    Type: String
+  PipeLineRole: 
+    Type: String
+  Repository: 
+    Type: String
+  ApiRoot:
+    Type: String   
+  UserPoolAppClientId:
+    Type: String 
+  UserPoolDomain:
+    Type: String
+  RedirectUri:  
+    Type: String   
+  UserPoolId: 
+    Type: String   
+
+
+
+Resources: 
+  AppPipeline: 
+    Properties: 
+      ArtifactStore: 
+        EncryptionKey: 
+          Id: !Ref Cmk
+          Type: KMS
+        Location: !Ref ArtifactsBucket
+        Type: S3
+      Name: !Sub "${AppName}-${Env}-frontend"
+      RoleArn: !Ref PipeLineRole
+      Stages: 
+        - 
+          Actions: 
+            - 
+              ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: 1
+              Configuration: 
+                BranchName: !Ref Branch
+                PollForSourceChanges: true
+                RepositoryName: !Ref Repository
+              Name: Code
+              OutputArtifacts: 
+                - 
+                  Name: SourceArtifact
+          Name: Source
+        - 
+          Actions: 
+            - 
+              ActionTypeId: 
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: 1
+              Configuration: 
+                ProjectName: 
+                  # Do not change. Following refers to logical id and must match with the object of type AWS::CodeBuild::Project
+                  Ref: CodeBuildProject
+              InputArtifacts: 
+                - 
+                  Name: SourceArtifact
+              Name: Build
+              OutputArtifacts: 
+                - 
+                  Name: BuildArtifact
+              RunOrder: 1
+            - !If
+              - IsProd
+              - ActionTypeId: 
+                  Category: Approval
+                  Owner: AWS
+                  Provider: Manual
+                  Version: 1
+                Configuration: 
+                  CustomData: "Approve if production update is really happening for FrontEnd."
+                  NotificationArn: !Ref NotificationTopic
+                InputArtifacts: []
+                Name: ProdApproval
+                RunOrder: 2
+              - !Ref "AWS::NoValue"
+          Name: Build
+        - 
+          Actions: 
+            - 
+              ActionTypeId: 
+                Category: Deploy
+                Owner: AWS
+                Provider: S3
+                Version: 1
+              Configuration: 
+                BucketName: !Sub "${AppName}-${Env}-public"
+                Extract: true
+              InputArtifacts: 
+                - 
+                  Name: BuildArtifact
+              Name: Deploy
+              RoleArn: !Join [ "", ["arn:aws:iam::", !Ref AccountId , ":role/PipelineSupportRole"] ]
+
+          Name: Deploy
+    Type: "AWS::CodePipeline::Pipeline"
+
+  CodeBuildProject: 
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Description: "This codebuild project packages React application"
+      EncryptionKey: !Ref Cmk
+      Environment: 
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables: 
+          - 
+            Name: S3Bucket
+            Value: !Sub "${AppName}-${Env}-public"
+          - 
+            Name: KMSKey
+            Value: !Ref Cmk
+          - 
+            Name: env
+            Value: !Ref Env
+          - 
+            Name: ApiRoot
+            Value: !Ref ApiRoot
+          - 
+            Name: UserPoolAppClientId
+            Value: !Ref UserPoolAppClientId
+          - 
+            Name: UserPoolDomain
+            Value: !Ref UserPoolDomain
+          - 
+            Name: RedirectUriSignIn
+            Value: !Ref RedirectUri
+          - 
+            Name: RedirectUriSignOut
+            Value: !Ref RedirectUri
+          - 
+            Name: UserPoolId
+            Value: !Ref UserPoolId
+
+        Image: "aws/codebuild/standard:3.0"
+        Type: LINUX_CONTAINER
+      Name: !Sub "${AppName}-${Env}-frontend"
+      ServiceRole: !Ref CodebuildRole
+      Source: 
+        BuildSpec: buildspec.yaml
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 10
+    Type: "AWS::CodeBuild::Project"

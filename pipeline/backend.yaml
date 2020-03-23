@@ -1,0 +1,201 @@
+Parameters: 
+  AccountId: 
+    Type: String
+  AppName: 
+    Type: String
+  ArtifactsBucket: 
+    Type: String
+  Branch: 
+    Type: String
+  Cmk: 
+    Type: String
+  CodebuildRole: 
+    Type: String
+  DockerImage: 
+    Type: String
+  Env: 
+    Type: String
+  NotificationTopic: 
+    Type: String
+  ParameterOverrides: 
+    Type: String
+  PipeLineRole: 
+    Type: String
+  Repository: 
+    Type: String
+
+
+
+    
+# Enforces manual approval for deployment to production environment
+Conditions: 
+  IsProd: !Equals [ !Ref Env, prod ]
+
+
+Resources: 
+  BuildProject: 
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Description: "Builds and packages application for deployment"
+      EncryptionKey: !Ref Cmk
+      Environment: 
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables: 
+          - 
+            Name: BucketName
+            Value: !Ref ArtifactsBucket
+          - 
+            Name: AppName
+            Value: !Ref AppName
+        Image: "aws/codebuild/standard:2.0"
+        Type: LINUX_CONTAINER
+      LogsConfig: 
+        CloudWatchLogs: 
+          GroupName: CodebuildProject
+          Status: ENABLED
+          StreamName: latest
+      Name: !Sub "${AppName}-${Env}-backend"
+      ServiceRole: !Ref CodebuildRole
+      Source: 
+        BuildSpec: buildspec_package.yaml
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 10
+    Type: "AWS::CodeBuild::Project"     
+
+
+
+      
+# Build project to run integration tests
+  IntegrationTestProject: 
+    Properties: 
+      Artifacts: 
+        Type: CODEPIPELINE
+      Cache: 
+        Modes: 
+          - LOCAL_DOCKER_LAYER_CACHE
+          - LOCAL_SOURCE_CACHE
+        Type: LOCAL
+      Description: !Sub "Performs integration test for ${AppName}-${Env}"
+      Environment: 
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables: 
+          - 
+            Name: AppName
+            Value: !Ref AppName
+        Image: !Ref DockerImage
+        ImagePullCredentialsType: SERVICE_ROLE
+        Type: LINUX_CONTAINER
+      LogsConfig: 
+        CloudWatchLogs: 
+          GroupName: CodebuildIntegrationTestProject
+          Status: ENABLED
+          StreamName: latest
+      Name: !Sub "${AppName}-${Env}-backend-integration-test"
+      ServiceRole: !Ref CodebuildRole
+      Source: 
+        BuildSpec: buildspec_integration_test.yaml
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 5
+    Type: "AWS::CodeBuild::Project"
+
+
+
+
+
+  Pipeline:   
+    Properties: 
+      # IMPORTANT: if you change pipeline name, you also need to update EventPattern in NotificationRule
+      Name: !Sub ${AppName}-${Env}-backend
+      RoleArn: !Ref PipeLineRole
+      Stages: 
+        - Name: Source
+          Actions: 
+            - ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              Configuration: 
+                PollForSourceChanges: true
+                BranchName: !Ref Branch
+                RepositoryName: !Ref Repository                
+              Name: Code
+              OutputArtifacts: 
+                - Name: SourceArtifact
+
+        - Name: Build
+          Actions:
+            - ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName:
+                  # Following refers to logical id of the AWS::CodeBuild::Project. 
+                  Ref: BuildProject
+              InputArtifacts:
+                - Name: SourceArtifact
+              Name: Build
+              OutputArtifacts:
+                - Name: BuildArtifact
+              RunOrder: 1
+            - !If
+              - IsProd
+              - ActionTypeId:
+                  Category: Approval
+                  Owner: AWS
+                  Version: 1
+                  Provider: Manual
+                Configuration:
+                  NotificationArn: !Ref NotificationTopic                  
+                  CustomData: Approve or reject deployment to your prod env
+                InputArtifacts: []
+                Name: ProdApproval 
+                RunOrder: 2               
+              - !Ref AWS::NoValue
+        - Name: Deploy
+          Actions:
+            - ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                TemplatePath: BuildArtifact::packaged.yaml
+                StackName: !Sub ${AppName}-${Env}
+                RoleArn: !Join [ "", ["arn:aws:iam::", !Ref AccountId, ":role/PipelineSupportRole"] ]
+                OutputFileName: CreateStackOutput.json
+                Capabilities: CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND
+                ParameterOverrides: !Ref ParameterOverrides
+              InputArtifacts:
+                - Name: BuildArtifact
+              Name: Deploy
+              RoleArn: !Join [ "", ["arn:aws:iam::", !Ref AccountId, ":role/PipelineSupportRole"] ]
+            
+        - Name: IntegrationTest
+          Actions:            
+            - ActionTypeId:
+                Category: Test
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              Configuration:
+                ProjectName:
+                  Ref: IntegrationTestProject  
+              InputArtifacts:
+                - Name: SourceArtifact
+              Name: IntegrationTest
+              OutputArtifacts:
+                - Name: IntegrationTestArtifact   
+  
+      ArtifactStore: 
+        EncryptionKey:
+          Id: !Ref Cmk
+          Type: KMS
+        Location:  
+          !Ref ArtifactsBucket
+        Type: S3            
+    Type: AWS::CodePipeline::Pipeline            
