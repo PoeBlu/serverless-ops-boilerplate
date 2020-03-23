@@ -13,7 +13,7 @@ An AWS account (called DevOps account) is used to orchestrate CI/CD across diffe
 This setup assumes that your backend and frontend code are in separate repositories (but of course you can modify it). This repository includes infrastruture-as-a-code templates as well the application logic (located in the app folder). And here you can find repository for frontend code.
 
 
-TODO: add architectural diagram
+![Architectural diagram](https://user-images.githubusercontent.com/21277296/77357787-63101b80-6d51-11ea-8a4a-6ea556f4e354.jpg)
 
 
 ## Setup your local machine
