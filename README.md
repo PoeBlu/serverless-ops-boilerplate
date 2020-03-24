@@ -10,7 +10,7 @@
 
 An AWS account (called DevOps account) is used to orchestrate CI/CD across different Dev,Test, Prod accounts (we refer to them as environment accounts).
 
-This setup assumes that your backend and frontend code are in separate repositories (but of course you can modify it). This repository includes infrastruture-as-a-code templates as well the application logic (located in the app folder). And here you can find repository for frontend code.
+This setup assumes that your backend and frontend code are in separate repositories (but of course you can modify it). This repository includes infrastruture-as-a-code templates as well as the application logic (located in the app folder). And [here](https://github.com/azarboon/serverless-ops-frontend) you can find repository for frontend code.
 
 
 ![Architectural diagram](https://user-images.githubusercontent.com/21277296/77357787-63101b80-6d51-11ea-8a4a-6ea556f4e354.jpg)
@@ -70,6 +70,7 @@ From now on, whenever you commit a new code to master branch of your backend rep
 
 ## Suggestion for further developments::
 
+Replace Amazon Cognito Identity SDK with AWS Amplify
 Fix integration test
 Restrict CORS origin based on cloudfront
 Add OpenApi specifications to Lambda functions
@@ -79,10 +80,10 @@ Add OpenApi specifications to Lambda functions
 
 ## Contributors
 
-This boilerplate is inspired by and is simplified version of following solution:
+This boilerplate is inspired by and is simplified version of [Building a Secure Cross-Account Continuous Delivery Pipeline](https://aws.amazon.com/blogs/devops/aws-building-a-secure-cross-account-continuous-delivery-pipeline/)
 
-    https://aws.amazon.com/blogs/devops/aws-building-a-secure-cross-account-continuous-delivery-pipeline/
+    
 
-Also, I have leveraged following projects:
+Also, I have leveraged [Weatherapp](https://github.com/mrako/weatherapp)
 
-    https://github.com/mrako/weatherapp
+    
