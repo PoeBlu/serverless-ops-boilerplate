@@ -93,7 +93,7 @@ Replace Amazon Cognito Identity SDK with AWS Amplify
 
 ## References
 
-This boilerplate is inspired by [Building a Secure Cross-Account Continuous Delivery Pipeline](https://aws.amazon.com/blogs/devops/aws-building-a-secure-cross-account-continuous-delivery-pipeline/). Implementing that solution was challenging, that's why I have created this boilerplate.
+This boilerplate is inspired by and is simplified version of [Building a Secure Cross-Account Continuous Delivery Pipeline](https://aws.amazon.com/blogs/devops/aws-building-a-secure-cross-account-continuous-delivery-pipeline/). Implementing that solution was challenging, that's why I have created this boilerplate.
 
     
 Also, I have leveraged [Weatherapp](https://github.com/mrako/weatherapp)
